@@ -2,6 +2,7 @@ package org.oauth.fake_oauth_canvas;
 
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -20,23 +21,32 @@ public class TokenStore {
     private final Map<String, String> refreshTokens = new ConcurrentHashMap<>();
 
     public TokenStore(
+            Environment env,
             // Instructor configuration
-            @Value("${oauth.instructor.access-token:}") String instructorAccessToken,
-            @Value("${oauth.instructor.refresh-token:}") String instructorRefreshToken,
+            @Value("${oauth.instructor.refresh-token:refresh-token-instructor-67890}") String instructorRefreshToken,
             @Value("${oauth.instructor.id:101}") int instructorId,
             @Value("${oauth.instructor.name:Kashyap Kale}") String instructorName,
             // Student configuration
-            @Value("${oauth.student.access-token:}") String studentAccessToken,
-            @Value("${oauth.student.refresh-token:}") String studentRefreshToken,
+            @Value("${oauth.student.refresh-token:refresh-token-student-fghij}") String studentRefreshToken,
             @Value("${oauth.student.id:202}") int studentId,
             @Value("${oauth.student.name:Sarthak Raut}") String studentName) {
         
-        // Validate required tokens
+        // Get access tokens directly from environment variables (REQUIRED)
+        String instructorAccessToken = env.getProperty("OAUTH_INSTRUCTOR_ACCESS_TOKEN");
+        String studentAccessToken = env.getProperty("OAUTH_STUDENT_ACCESS_TOKEN");
+        
+        // Validate required tokens - MUST be set via environment variables
         if (instructorAccessToken == null || instructorAccessToken.isEmpty()) {
-            throw new IllegalStateException("oauth.instructor.access-token is required in application.properties");
+            throw new IllegalStateException(
+                "OAUTH_INSTRUCTOR_ACCESS_TOKEN environment variable is REQUIRED. " +
+                "Please set it in Railway's environment variables."
+            );
         }
         if (studentAccessToken == null || studentAccessToken.isEmpty()) {
-            throw new IllegalStateException("oauth.student.access-token is required in application.properties");
+            throw new IllegalStateException(
+                "OAUTH_STUDENT_ACCESS_TOKEN environment variable is REQUIRED. " +
+                "Please set it in Railway's environment variables."
+            );
         }
         
         // Instructor
