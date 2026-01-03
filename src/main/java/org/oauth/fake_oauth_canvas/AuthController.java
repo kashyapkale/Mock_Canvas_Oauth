@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.json.JSONObject;
 import jakarta.servlet.http.HttpSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 import java.util.UUID;
@@ -17,10 +19,15 @@ import java.util.UUID;
 @RestController
 public class AuthController {
 
+    private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
+
     private final TokenStore tokenStore;
 
     public AuthController(TokenStore tokenStore) {
         this.tokenStore = tokenStore;
+        logger.info("======================================");
+        logger.info("AuthController initialized");
+        logger.info("======================================");
     }
 
     @GetMapping("/login/oauth2/auth")
@@ -36,7 +43,18 @@ public class AuthController {
             @RequestParam(value = "prompt", required = false) String prompt,
             HttpSession session) {
 
+        logger.info("======================================");
+        logger.info("[AUTHORIZE] GET /login/oauth2/auth");
+        logger.info("[AUTHORIZE] Session ID: {}", session.getId());
+        logger.info("[AUTHORIZE] client_id: {}", clientId);
+        logger.info("[AUTHORIZE] response_type: {}", responseType);
+        logger.info("[AUTHORIZE] redirect_uri: {}", redirectUri);
+        logger.info("[AUTHORIZE] state: {}", state);
+        logger.info("[AUTHORIZE] scope: {}", scope);
+        logger.info("======================================");
+
         if (!"code".equals(responseType)) {
+            logger.error("[AUTHORIZE] Invalid response_type: {}. Expected 'code'", responseType);
             return ResponseEntity.badRequest().build();
         }
 
@@ -45,6 +63,10 @@ public class AuthController {
         session.setAttribute("state", state);
         session.setAttribute("scope", scope);
 
+        logger.info("[AUTHORIZE] Stored in session - client_id: {}, redirect_uri: {}, state: {}",
+            clientId, redirectUri, state);
+        logger.info("[AUTHORIZE] Redirecting to /login/oauth2/select-role");
+
         HttpHeaders headers = new HttpHeaders();
         headers.setLocation(URI.create("/login/oauth2/select-role"));
         return new ResponseEntity<>(headers, HttpStatus.FOUND);
@@ -52,11 +74,32 @@ public class AuthController {
 
     @PostMapping("/login/oauth2/select-role")
     public ResponseEntity<Void> selectRole(@RequestParam("role") String role, HttpSession session) {
+        logger.info("======================================");
+        logger.info("[SELECT-ROLE] POST /login/oauth2/select-role");
+        logger.info("[SELECT-ROLE] Session ID: {}", session.getId());
+        logger.info("[SELECT-ROLE] Selected role: {}", role);
+
         String redirectUri = (String) session.getAttribute("redirect_uri");
         String state = (String) session.getAttribute("state");
+        String clientId = (String) session.getAttribute("client_id");
+
+        logger.info("[SELECT-ROLE] Retrieved from session - redirect_uri: {}", redirectUri);
+        logger.info("[SELECT-ROLE] Retrieved from session - state: {}", state);
+        logger.info("[SELECT-ROLE] Retrieved from session - client_id: {}", clientId);
+
+        if (redirectUri == null) {
+            logger.error("[SELECT-ROLE] ERROR: redirect_uri is NULL in session!");
+            logger.error("[SELECT-ROLE] Session attributes: client_id={}, state={}", clientId, state);
+            return ResponseEntity.badRequest().build();
+        }
 
         String code = tokenStore.generateCode(role);
+        logger.info("[SELECT-ROLE] Generated authorization code: {}", code);
+        logger.info("[SELECT-ROLE] Code mapped to role: {}", role);
+
         String location = redirectUri + "?code=" + code + "&state=" + state;
+        logger.info("[SELECT-ROLE] Redirecting to: {}", location);
+        logger.info("======================================");
 
         HttpHeaders headers = new HttpHeaders();
         headers.setLocation(URI.create(location));
@@ -75,46 +118,79 @@ public class AuthController {
         @RequestParam(value = "client_assertion", required = false) String clientAssertion,
         @RequestParam(value = "scope", required = false) String scope) {
 
-    if ("authorization_code".equals(grantType)) {
-        String role = tokenStore.getRoleForCode(code);
-        if (role == null) {
-            return ResponseEntity.badRequest().body("Invalid code");
+        logger.info("======================================");
+        logger.info("[TOKEN] POST /login/oauth2/token");
+        logger.info("[TOKEN] grant_type: {}", grantType);
+        logger.info("[TOKEN] client_id: {}", clientId);
+        logger.info("[TOKEN] client_secret: {}", clientSecret != null ? "[REDACTED - length=" + clientSecret.length() + "]" : "null");
+        logger.info("[TOKEN] redirect_uri: {}", redirectUri);
+        logger.info("[TOKEN] code: {}", code);
+        logger.info("[TOKEN] refresh_token: {}", refreshToken != null ? "[REDACTED]" : "null");
+        logger.info("======================================");
+
+        if ("authorization_code".equals(grantType)) {
+            logger.info("[TOKEN] Processing authorization_code grant");
+            logger.info("[TOKEN] Looking up code in TokenStore: {}", code);
+
+            String role = tokenStore.getRoleForCode(code);
+            logger.info("[TOKEN] TokenStore returned role: {}", role);
+
+            if (role == null) {
+                logger.error("======================================");
+                logger.error("[TOKEN] ERROR: Invalid code - not found in TokenStore!");
+                logger.error("[TOKEN] Code attempted: {}", code);
+                logger.error("[TOKEN] Current codes in store: {}", tokenStore.getAllCodes());
+                logger.error("======================================");
+                return ResponseEntity.badRequest().body("Invalid code");
+            }
+
+            logger.info("[TOKEN] Code is valid! Role: {}", role);
+
+            JSONObject response = new JSONObject();
+            String accessToken = tokenStore.getAccessToken(role);
+            response.put("access_token", accessToken);
+            response.put("token_type", "Bearer");
+            response.put("user", tokenStore.getUserDetails(role));
+            response.put("refresh_token", tokenStore.getRefreshToken(role));
+            response.put("expires_in", 3600);
+            response.put("canvas_region", "us-east-1");
+
+            logger.info("[TOKEN] SUCCESS! Returning tokens for role: {}", role);
+            logger.info("[TOKEN] Access token (first 20 chars): {}...",
+                accessToken != null && accessToken.length() > 20 ? accessToken.substring(0, 20) : accessToken);
+            logger.info("======================================");
+
+            return ResponseEntity.ok(response.toString());
+
+        } else if ("refresh_token".equals(grantType)) {
+            logger.info("[TOKEN] Processing refresh_token grant");
+            String role = TokenStore.INSTRUCTOR_ROLE;
+            JSONObject response = new JSONObject();
+            response.put("access_token", tokenStore.getAccessToken(role));
+            response.put("token_type", "Bearer");
+            response.put("user", tokenStore.getUserDetails(role));
+            response.put("expires_in", 3600);
+            logger.info("[TOKEN] SUCCESS! Returning refreshed tokens");
+            return ResponseEntity.ok(response.toString());
+
+        } else if ("client_credentials".equals(grantType)) {
+            logger.info("[TOKEN] Processing client_credentials grant");
+            JSONObject response = new JSONObject();
+            response.put("access_token", UUID.randomUUID().toString());
+            response.put("token_type", "Bearer");
+            response.put("expires_in", 3600);
+            response.put("scope", scope);
+            return ResponseEntity.ok(response.toString());
         }
 
-        JSONObject response = new JSONObject();
-        response.put("access_token", tokenStore.getAccessToken(role));
-        response.put("token_type", "Bearer");
-        response.put("user", tokenStore.getUserDetails(role));
-        response.put("refresh_token", tokenStore.getRefreshToken(role));
-        response.put("expires_in", 3600);
-        response.put("canvas_region", "us-east-1");
-        return ResponseEntity.ok(response.toString());
-    } else if ("refresh_token".equals(grantType)) {
-        // This part needs a way to map refresh_token back to a role.
-        // For now, let's assume instructor for demonstration.
-        // A real implementation would store a mapping.
-        String role = TokenStore.INSTRUCTOR_ROLE; 
-        JSONObject response = new JSONObject();
-        response.put("access_token", tokenStore.getAccessToken(role));
-        response.put("token_type", "Bearer");
-        response.put("user", tokenStore.getUserDetails(role));
-        response.put("expires_in", 3600);
-        return ResponseEntity.ok(response.toString());
-    } else if ("client_credentials".equals(grantType)) {
-        JSONObject response = new JSONObject();
-        response.put("access_token", UUID.randomUUID().toString());
-        response.put("token_type", "Bearer");
-        response.put("expires_in", 3600);
-        response.put("scope", scope);
-        return ResponseEntity.ok(response.toString());
-    }
-
-    return ResponseEntity.badRequest().build();
+        logger.error("[TOKEN] ERROR: Unsupported grant_type: {}", grantType);
+        return ResponseEntity.badRequest().build();
     }
 
     @DeleteMapping("/login/oauth2/token")
     public ResponseEntity<String> logout(
             @RequestParam(value = "expire_sessions", required = false) String expireSessions) {
+        logger.info("[LOGOUT] DELETE /login/oauth2/token, expire_sessions={}", expireSessions);
         if ("1".equals(expireSessions)) {
             JSONObject response = new JSONObject();
             response.put("forward_url", "https://idp.school.edu/opaque_url");
@@ -126,6 +202,7 @@ public class AuthController {
     @GetMapping("/login/session_token")
     public ResponseEntity<String> sessionToken(
             @RequestParam(value = "return_to", required = false) String returnTo) {
+        logger.info("[SESSION-TOKEN] GET /login/session_token, return_to={}", returnTo);
         JSONObject response = new JSONObject();
         response.put("session_url", "https://canvas.instructure.com/opaque_url");
         return ResponseEntity.ok(response.toString());
@@ -137,16 +214,22 @@ public class AuthController {
      */
     @GetMapping("/api/v1/users/self")
     public ResponseEntity<String> getUserInfo(@RequestParam(value = "access_token", required = false) String accessToken) {
+        logger.info("======================================");
+        logger.info("[USER-INFO] GET /api/v1/users/self");
+        logger.info("[USER-INFO] access_token: {}", accessToken != null ? accessToken.substring(0, Math.min(20, accessToken.length())) + "..." : "null");
+
         // Check if token is valid by looking it up in our token store
         String role = tokenStore.getRoleForAccessToken(accessToken);
-        
+        logger.info("[USER-INFO] Token lookup returned role: {}", role);
+
         if (role == null) {
-            // Check header for Bearer token
+            logger.error("[USER-INFO] ERROR: Invalid access token - not found in TokenStore");
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid access token");
         }
 
         JSONObject userDetails = tokenStore.getUserDetails(role);
         if (userDetails == null) {
+            logger.error("[USER-INFO] ERROR: No user details found for role: {}", role);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid access token");
         }
 
@@ -159,6 +242,8 @@ public class AuthController {
             userDetails.put("login_id", "sarthakr@vt.edu");
         }
 
+        logger.info("[USER-INFO] SUCCESS! Returning user details for role: {}", role);
+        logger.info("======================================");
         return ResponseEntity.ok(userDetails.toString());
     }
 }
