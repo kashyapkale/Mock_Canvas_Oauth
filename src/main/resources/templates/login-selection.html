@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login As</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            flex-direction: column;
+        }
+        .container {
+            border: 1px solid #ccc;
+            padding: 2rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .role-button {
+            display: block;
+            width: 100%;
+            padding: 1rem;
+            margin: 1rem 0;
+            font-size: 1.2rem;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Choose a Role to Login As</h2>
+        <form action="/login/oauth2/select-role" method="post">
+            <input type="hidden" name="role" value="instructor">
+            <button type="submit" class="role-button">Login as Instructor</button>
+        </form>
+        <form action="/login/oauth2/select-role" method="post">
+            <input type="hidden" name="role" value="student">
+            <button type="submit" class="role-button">Login as Student</button>
+        </form>
+    </div>
+</body>
+</html>
